@@ -651,6 +651,10 @@ void ofCairoRenderer::setBlendMode(ofBlendMode blendMode){
 			cairo_set_operator(cr,CAIRO_OPERATOR_DIFFERENCE);
 			break;
 		}
+		case OF_BLENDMODE_DARKEN:{
+			cairo_set_operator(cr,CAIRO_OPERATOR_DARKEN);
+			break;
+		}
 #endif
 
 		default:

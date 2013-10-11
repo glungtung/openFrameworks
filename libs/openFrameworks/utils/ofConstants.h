@@ -483,7 +483,8 @@ enum ofBlendMode{
 	OF_BLENDMODE_ADD 	  = 2,
 	OF_BLENDMODE_SUBTRACT = 3,
 	OF_BLENDMODE_MULTIPLY = 4,
-	OF_BLENDMODE_SCREEN   = 5
+	OF_BLENDMODE_SCREEN   = 5,
+    OF_BLENDMODE_DARKEN   = 6
 };
 
 //this is done to match the iPhone defaults 

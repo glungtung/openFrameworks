@@ -727,6 +727,15 @@ void ofGLRenderer::setBlendMode(ofBlendMode blendMode){
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 			break;
 		}
+            
+        case OF_BLENDMODE_DARKEN:{
+			glEnable(GL_BLEND);
+#ifndef TARGET_OPENGLES
+            glBlendEquation(GL_MIN);
+#endif
+			glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ONE);
+			break;
+		}
 
 		default:
 			break;

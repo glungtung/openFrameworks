@@ -741,6 +741,12 @@ void ofGLProgrammableRenderer::setBlendMode(ofBlendMode blendMode){
 			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 			break;
 
+        case OF_BLENDMODE_DARKEN:
+			glEnable(GL_BLEND);
+			glBlendEquation(GL_MIN);
+            glBlendFunc( GL_ZERO, GL_ZERO ); // Should be ignored by opengl
+			break;
+            
 		default:
 			break;
 	}
