@@ -4,7 +4,15 @@
 void ofApp::setup(){
 
 	ofSetOrientation(OF_ORIENTATION_90_RIGHT);//Set iOS to Orientation Landscape Right
-    nImages = DIR.listDir("images/of_logos/");
+    
+    NSArray *paths = NSSearchPathForDirectoriesInDomains(NSDocumentDirectory, NSUserDomainMask, YES);
+    NSString *documentsDirectory = [paths objectAtIndex:0];
+    
+    const char* dirString = [documentsDirectory cStringUsingEncoding:NSASCIIStringEncoding];
+    ofDisableDataPath();
+
+    
+    nImages = DIR.listDir(dirString);
 
  	images = new ofImage[nImages];
     //you can now iterate through the files as you like

@@ -25,8 +25,10 @@
 
 //---------------------------------------------------------- video player delegate.
 @protocol AVFoundationVideoPlayerDelegate <NSObject>
+@optional
 - (void)playerReady;
 - (void)playerDidProgress;
+- (void)playerDidFinishSeeking;
 - (void)playerDidFinishPlayingVideo;
 @end
 
@@ -41,7 +43,8 @@
 @property (nonatomic, retain) AVPlayerItem * playerItem;
 @property (nonatomic, retain) AVAsset * asset;
 @property (nonatomic, retain) AVAssetReader * assetReader;
-@property (nonatomic, retain) AVAssetReaderOutput * assetReaderVideoOutput;
+@property (nonatomic, retain) AVAssetReaderTrackOutput * assetReaderVideoTrackOutput;
+@property (nonatomic, retain) AVAssetReaderTrackOutput * assetReaderAudioTrackOutput;
 
 - (BOOL)loadWithFile:(NSString*)file;
 - (BOOL)loadWithPath:(NSString*)path;
@@ -67,9 +70,15 @@
 - (BOOL)isFinished;
 
 - (CVImageBufferRef)getCurrentFrame;
+- (CMSampleBufferRef)getVideoSampleBuffer;
+- (CMSampleBufferRef)getAudioSampleBuffer;
 
 - (NSInteger)getWidth;
 - (NSInteger)getHeight;
+- (void)setSampleTimeInSec:(double)time;
+- (void)setSampleTime:(CMTime)time;
+- (CMTime)getVideoTime;
+- (double)getVideoTimeInSec;
 - (CMTime)getCurrentTime;
 - (double)getCurrentTimeInSec;
 - (CMTime)getDuration;

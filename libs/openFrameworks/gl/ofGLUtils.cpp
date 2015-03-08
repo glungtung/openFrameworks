@@ -294,9 +294,11 @@ ofImageType ofGetImageTypeFromGLType(int glType){
 	case GL_RGB:
 		return OF_IMAGE_COLOR;
 	case GL_RGBA:
-    case GL_RGBA32F_ARB:
 		return OF_IMAGE_COLOR_ALPHA;
 #ifndef TARGET_OPENGLES
+    case GL_RGBA32F_ARB:
+        return OF_IMAGE_COLOR_ALPHA;
+            
 	case GL_DEPTH_COMPONENT32:
 	case GL_DEPTH_COMPONENT16:
 	case GL_DEPTH_COMPONENT24:

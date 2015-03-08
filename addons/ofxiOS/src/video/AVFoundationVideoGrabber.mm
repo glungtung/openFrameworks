@@ -103,6 +103,12 @@
 				width	= w;
 				height	= h;		
 			}
+			else if( w == 2592 && h == 1936 ){
+				preset = AVCaptureSessionPresetPhoto;
+				width	= w;
+				height	= h;
+			}
+            
 			else if( w == 192 && h == 144 ){
 				preset = AVCaptureSessionPresetLow;
 				width	= w;

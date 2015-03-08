@@ -743,7 +743,9 @@ void ofGLProgrammableRenderer::setBlendMode(ofBlendMode blendMode){
 
         case OF_BLENDMODE_DARKEN:
 			glEnable(GL_BLEND);
-			glBlendEquation(GL_MIN);
+#ifndef TARGET_OPENGLES
+            glBlendEquation(GL_MIN);
+#endif
             glBlendFunc( GL_ZERO, GL_ZERO ); // Should be ignored by opengl
 			break;
             

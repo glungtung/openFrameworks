@@ -695,7 +695,9 @@ void ofGLRenderer::setBlendMode(ofBlendMode blendMode){
 			#ifndef TARGET_OPENGLES
 				glBlendEquation(GL_FUNC_ADD);
 			#endif
-			glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            //glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+            
 			break;
 		}
 
@@ -734,6 +736,7 @@ void ofGLRenderer::setBlendMode(ofBlendMode blendMode){
             glBlendEquation(GL_MIN);
 #endif
 			glBlendFunc(GL_ONE_MINUS_DST_COLOR, GL_ONE);
+            //glBlendFunc(GL_SRC_ALPHA, GL_ONE);
 			break;
 		}
 

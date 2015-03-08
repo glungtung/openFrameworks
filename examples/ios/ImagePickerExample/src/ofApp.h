@@ -23,7 +23,6 @@ class ofApp : public ofxiOSApp{
         void gotMemoryWarning();
         void deviceOrientationChanged(int newOrientation);
 	
-        ofxiOSImagePicker * camera;
         ofImage	photo;
         ofPoint imgPos;
 	

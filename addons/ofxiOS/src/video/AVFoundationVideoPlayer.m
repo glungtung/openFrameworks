@@ -48,11 +48,15 @@ NSString * const kCurrentItemKey	= @"currentItem";
     id timeObserver;
     int timeObserverFps;
     
-	CMSampleBufferRef buffer;
-	CMTime timestamp;
-	CMTime timestampLast;
+	CMSampleBufferRef videoSampleBuffer;
+    CMSampleBufferRef audioSampleBuffer;
+	CMTime videoTimestamp;
+	CMTime videoTimestampLast;
+    CMTime videoTime;
+    CMTime audioTimestamp;
 	CMTime duration;
     CMTime currentTime;
+    CMTime sampleTime;
     float volume;
     float speed;
     float frameRate;
@@ -66,9 +70,10 @@ NSString * const kCurrentItemKey	= @"currentItem";
     BOOL bUpdateFirstFrame;
     BOOL bNewFrame;
     BOOL bPlaying;
-    bool bFinished;
+    BOOL bFinished;
     BOOL bAutoPlayOnLoad;
     BOOL bLoop;
+    BOOL bSeeking;
 }
 
 @synthesize delegate;
@@ -77,7 +82,8 @@ NSString * const kCurrentItemKey	= @"currentItem";
 @synthesize playerItem;
 @synthesize asset;
 @synthesize assetReader;
-@synthesize assetReaderVideoOutput;
+@synthesize assetReaderVideoTrackOutput;
+@synthesize assetReaderAudioTrackOutput;
 
 static const NSString * ItemStatusContext;
 
@@ -102,11 +108,15 @@ static const NSString * ItemStatusContext;
         timeObserver = nil;
         timeObserverFps = 30;
         
-        buffer = nil;
-        timestamp = kCMTimeZero;
-        timestampLast = kCMTimeZero;
+        videoSampleBuffer = nil;
+        audioSampleBuffer = nil;
+        videoTimestamp = kCMTimeZero;
+        videoTimestampLast = kCMTimeZero;
+        videoTime = kCMTimeZero;
+        audioTimestamp = kCMTimeZero;
         duration = kCMTimeZero;
         currentTime = kCMTimeZero;
+        sampleTime = kCMTimeInvalid;
         volume = 1;
         speed = 1;
         frameRate = 0;
@@ -123,6 +133,7 @@ static const NSString * ItemStatusContext;
         bFinished = NO;
         bAutoPlayOnLoad = NO;
         bLoop = NO;
+        bSeeking = NO;
     }
     return self;
 }
@@ -151,12 +162,18 @@ static const NSString * ItemStatusContext;
     
     [self.assetReader cancelReading];
 	self.assetReader = nil;
-    self.assetReaderVideoOutput = nil;
+    self.assetReaderVideoTrackOutput = nil;
+    self.assetReaderAudioTrackOutput = nil;
     self.asset = nil;
     
-    if(buffer) {
-        CFRelease(buffer);
-        buffer = nil;
+    if(videoSampleBuffer) {
+        CFRelease(videoSampleBuffer);
+        videoSampleBuffer = nil;
+    }
+    
+    if(audioSampleBuffer) {
+        CFRelease(audioSampleBuffer);
+        audioSampleBuffer = nil;
     }
     
     [super dealloc];
@@ -220,8 +237,8 @@ static const NSString * ItemStatusContext;
                     return; // asset reader not created.
                 }
                 
-                buffer = [self.assetReaderVideoOutput copyNextSampleBuffer];
-                CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(buffer);
+                videoSampleBuffer = [self.assetReaderVideoTrackOutput copyNextSampleBuffer];
+                CVImageBufferRef imageBuffer = CMSampleBufferGetImageBuffer(videoSampleBuffer);
                 CVPixelBufferLockBaseAddress(imageBuffer,0);
                 videoWidth = CVPixelBufferGetWidth(imageBuffer);
                 videoHeight = CVPixelBufferGetHeight(imageBuffer);
@@ -270,7 +287,8 @@ static const NSString * ItemStatusContext;
 
 - (BOOL)createAssetReaderWithTimeRange:(CMTimeRange)timeRange {
     
-    timestamp = timestampLast = timeRange.start;
+    videoTimestamp = videoTimestampLast = timeRange.start;
+    audioTimestamp = timeRange.start;
     
     NSError *error = nil;
     self.assetReader = [AVAssetReader assetReaderWithAsset:self.asset error:&error];
@@ -281,27 +299,70 @@ static const NSString * ItemStatusContext;
     }
     self.assetReader.timeRange = timeRange;
     
-    NSMutableDictionary * dictionary = [[[NSMutableDictionary alloc] init] autorelease];
-    [dictionary setObject:[NSNumber numberWithInt:kCVPixelFormatType_32BGRA] 
-                   forKey:(NSString*)kCVPixelBufferPixelFormatTypeKey];
+    //------------------------------------------------------------ add video output.
+    NSMutableDictionary * videoOutputSettings = [[[NSMutableDictionary alloc] init] autorelease];
+    [videoOutputSettings setObject:[NSNumber numberWithInt:kCVPixelFormatType_32BGRA]
+                            forKey:(NSString*)kCVPixelBufferPixelFormatTypeKey];
     
     NSArray * videoTracks = [self.asset tracksWithMediaType:AVMediaTypeVideo];
-    AVAssetTrack * videoTrack = [videoTracks objectAtIndex:0];
-    self.assetReaderVideoOutput = [[[AVAssetReaderTrackOutput alloc] initWithTrack:videoTrack 
-                                                                    outputSettings:dictionary] autorelease];
-    
-    if(self.assetReaderVideoOutput == nil) {
-        NSLog(@"assetReaderVideoOutput initWithTrack failed for video track");
-        return NO;
+    if([videoTracks count] > 0) {
+        AVAssetTrack * videoTrack = [videoTracks objectAtIndex:0];
+        self.assetReaderVideoTrackOutput = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:videoTrack
+                                                                                      outputSettings:videoOutputSettings];
+        
+        if(self.assetReaderVideoTrackOutput == nil) {
+            NSLog(@"assetReaderVideoTrackOutput failed to load.");
+        }
+        
+        if([self.assetReader canAddOutput:self.assetReaderVideoTrackOutput]) {
+            [self.assetReader addOutput:self.assetReaderVideoTrackOutput];
+        } else {
+            NSLog(@"assetReaderVideoTrackOutput cannot be add to assetReader");
+        }
     }
     
-    if(![self.assetReader canAddOutput:self.assetReaderVideoOutput]) {
-        NSLog(@"cannot add video output");
-        return NO;
+    //------------------------------------------------------------ add audio output.
+    double preferredHardwareSampleRate = [[AVAudioSession sharedInstance] currentHardwareSampleRate];
+    
+    AudioChannelLayout channelLayout;
+    bzero(&channelLayout, sizeof(channelLayout));
+    channelLayout.mChannelLayoutTag = kAudioChannelLayoutTag_Stereo;
+    
+    int numOfChannels = 1;
+    if(channelLayout.mChannelLayoutTag == kAudioChannelLayoutTag_Stereo) {
+        numOfChannels = 2;
     }
     
-    [self.assetReader addOutput:self.assetReaderVideoOutput];
+    NSDictionary * audioOutputSettings = nil;
+    audioOutputSettings = [NSDictionary dictionaryWithObjectsAndKeys:
+                           [NSNumber numberWithInt:kAudioFormatLinearPCM], AVFormatIDKey,
+                           [NSNumber numberWithFloat:preferredHardwareSampleRate], AVSampleRateKey,
+                           [NSNumber numberWithInt:numOfChannels], AVNumberOfChannelsKey,
+                           [NSData dataWithBytes:&channelLayout length:sizeof(AudioChannelLayout)], AVChannelLayoutKey,
+                           [NSNumber numberWithInt:16], AVLinearPCMBitDepthKey,
+                           [NSNumber numberWithBool:NO], AVLinearPCMIsNonInterleaved,
+                           [NSNumber numberWithBool:NO], AVLinearPCMIsFloatKey,
+                           [NSNumber numberWithBool:NO], AVLinearPCMIsBigEndianKey,
+                           nil];
     
+    NSArray * audioTracks = [self.asset tracksWithMediaType:AVMediaTypeAudio];
+    if([audioTracks count] > 0) {
+        AVAssetTrack * audioTrack = [audioTracks objectAtIndex:0];
+        self.assetReaderAudioTrackOutput = [AVAssetReaderTrackOutput assetReaderTrackOutputWithTrack:audioTrack
+                                                                                      outputSettings:audioOutputSettings];
+        
+        if(self.assetReaderAudioTrackOutput == nil) {
+            NSLog(@"assetReaderAudioTrackOutput failed to load.");
+        }
+        
+        if([self.assetReader canAddOutput:self.assetReaderAudioTrackOutput]) {
+            [self.assetReader addOutput:self.assetReaderAudioTrackOutput];
+        } else {
+            NSLog(@"assetReaderAudioTrackOutput cannot be add to assetReader");
+        }
+    }
+    
+    //------------------------------------------------------------ start reading.
     BOOL bOk = [self.assetReader startReading];
     if(!bOk ) {
         NSLog(@"assetReader couldn't startReading: %@", [self.assetReader error]);
@@ -319,10 +380,13 @@ static const NSString * ItemStatusContext;
     bPlaying = NO;
     bFinished = NO;
     
-    timestamp = kCMTimeZero;
-    timestampLast = kCMTimeZero;
+    videoTimestamp = kCMTimeZero;
+    videoTimestampLast = kCMTimeZero;
+    videoTime = kCMTimeZero;
+    audioTimestamp = kCMTimeZero;
     duration = kCMTimeZero;
     currentTime = kCMTimeZero;
+    sampleTime = kCMTimeInvalid;
 
     videoWidth = 0;
     videoHeight = 0;
@@ -339,12 +403,18 @@ static const NSString * ItemStatusContext;
     
     [self.assetReader cancelReading];
 	self.assetReader = nil;
-    self.assetReaderVideoOutput = nil;
+    self.assetReaderVideoTrackOutput = nil;
+    self.assetReaderAudioTrackOutput = nil;
     self.asset = nil;
     
-    if(buffer) {
-        CFRelease(buffer);
-        buffer = nil;
+    if(videoSampleBuffer) {
+        CFRelease(videoSampleBuffer);
+        videoSampleBuffer = nil;
+    }
+    
+    if(audioSampleBuffer) {
+        CFRelease(audioSampleBuffer);
+        audioSampleBuffer = nil;
     }
     
 	[self removeTimeObserverFromPlayer];
@@ -358,7 +428,9 @@ static const NSString * ItemStatusContext;
             bReady = true;
             [self update]; // update as soon is ready so pixels are loaded.
             [self setVolume:volume]; // set volume for current video.
-            [self.delegate playerReady];
+            if([self.delegate respondsToSelector:@selector(playerReady)]) {
+                [self.delegate playerReady];
+            }
             if(bAutoPlayOnLoad || bPlayStateBeforeLoad) {
                 [self play];
             }
@@ -389,7 +461,9 @@ static const NSString * ItemStatusContext;
 - (void)playerItemDidReachEnd {
     bFinished = YES;
     bPlaying = NO;
-    [self.delegate playerDidFinishPlayingVideo];
+    if([self.delegate respondsToSelector:@selector(playerDidFinishPlayingVideo)]) {
+        [self.delegate playerDidFinishPlayingVideo];
+    }
     if(bLoop) {
         bFinished = NO;
         [self seekToStart];
@@ -408,8 +482,28 @@ static const NSString * ItemStatusContext;
         bNewFrame = NO;
         return;
     }
+
+    /**
+     *  in most cases we check at what time the video player is up to,
+     *  and use the time for sampling buffers in the code below.
+     *  but if a sampleTime is provided then we use it instead of video player time.
+     *  sampleTime is used when synchronous time is needed (video player plays asynchronously),
+     *  such as when needing to access the video frames, frame by frame.
+     *  sampleTime is cleared (invalidated) on every frame so it must be set before calling update.
+     */
+    CMTime time = kCMTimeZero;
+    if(CMTIME_IS_VALID(sampleTime)) {
+        time = sampleTime;
+        sampleTime = kCMTimeInvalid;
+        if(CMTIME_COMPARE_INLINE(time, <, kCMTimeZero)) {
+            time = kCMTimeZero;
+        } else if(CMTIME_COMPARE_INLINE(time, >, duration)) {
+            time = duration;
+        }
+    } else {
+        time = [_player currentTime];
+    }
     
-    CMTime time = [_player currentTime];
     if(bUpdateFirstFrame) {
         /**
          *  this forces the first frame to be updated.
@@ -424,6 +518,12 @@ static const NSString * ItemStatusContext;
     currentTime = time;
     
     if(self.assetReader == nil) {
+        if(bSeeking == true) {
+            // video player is seeking to new position.
+            // asset reader can only be created when seeking has finished.
+            return;
+        }
+        
         [self createAssetReaderWithTimeRange:CMTimeRangeMake(currentTime, duration)];
     }
     
@@ -431,37 +531,72 @@ static const NSString * ItemStatusContext;
         bNewFrame = NO;
         return;
     }
-    
-    BOOL bOk = YES;
-    while(self.assetReader.status == AVAssetReaderStatusReading &&  // asset read is in reading state.
-          ((CMTimeCompare(timestamp, currentTime) == -1) ||         // timestamp is less then currentTime.
-          (CMTimeCompare(timestamp, currentTime) == 0))) {          // timestamp is equal currentTime.
 
-        CMSampleBufferRef bufferTemp = [self.assetReaderVideoOutput copyNextSampleBuffer];
-        if(bufferTemp) {
-            if(buffer) { // release old buffer.
-                CFRelease(buffer);
-                buffer = nil;
+    //---------------------------------------------------------- audio buffer.
+    while(self.assetReaderAudioTrackOutput != nil &&                // asset has a audio track.
+          self.assetReader.status == AVAssetReaderStatusReading &&  // asset read is in reading state.
+          ((CMTimeCompare(audioTimestamp, currentTime) == -1) ||    // timestamp is less then currentTime.
+           (CMTimeCompare(audioTimestamp, currentTime) == 0)))      // timestamp is equal currentTime.
+    {
+        CMSampleBufferRef audioBufferTemp;
+        @try {
+            audioBufferTemp = [self.assetReaderAudioTrackOutput copyNextSampleBuffer];
+        } @catch (NSException * e) {
+            break;
+        }
+        
+        if(audioBufferTemp) {
+            if(audioSampleBuffer) { // release old buffer.
+                CFRelease(audioSampleBuffer);
+                audioSampleBuffer = nil;
             }
-            buffer = bufferTemp; // save reference to new buffer.
-
-            timestamp = CMSampleBufferGetPresentationTimeStamp(buffer);
+            audioSampleBuffer = audioBufferTemp; // save reference to new buffer.
             
+            audioTimestamp = CMSampleBufferGetPresentationTimeStamp(audioSampleBuffer);
         } else {
-            if(self.assetReader.status == AVAssetReaderStatusCompleted) {
-                // video finished.
-            }
-            bOk = NO;
+            break;
         }
     }
     
-    if(bOk) {
-        bNewFrame = CMTimeCompare(timestamp, timestampLast) == 1;
-        if(bNewFrame) {
-            timestampLast = timestamp;
+    //---------------------------------------------------------- video buffer.
+    BOOL bCopiedNewSamples = NO;
+    while(self.assetReaderVideoTrackOutput != nil &&                    // asset has a video track.
+          self.assetReader.status == AVAssetReaderStatusReading &&      // asset read is in reading state.
+          ((CMTimeCompare(videoTimestamp, currentTime) == -1) ||        // timestamp is less then currentTime.
+          (CMTimeCompare(videoTimestamp, currentTime) == 0)))           // timestamp is equal currentTime.
+    {
+        CMSampleBufferRef videoBufferTemp;
+        @try {
+            videoBufferTemp = [self.assetReaderVideoTrackOutput copyNextSampleBuffer];
+        } @catch (NSException * e) {
+            break;
         }
         
-        [self.delegate playerDidProgress];
+        if(videoBufferTemp) {
+            if(videoSampleBuffer) { // release old buffer.
+                CFRelease(videoSampleBuffer);
+                videoSampleBuffer = nil;
+            }
+            videoSampleBuffer = videoBufferTemp; // save reference to new buffer.
+            
+            videoTimestamp = CMSampleBufferGetPresentationTimeStamp(videoSampleBuffer);
+            
+            bCopiedNewSamples = YES;
+        } else {
+            break;
+        }
+    }
+    
+    if(bCopiedNewSamples == true) {
+        bNewFrame = CMTimeCompare(videoTimestamp, videoTimestampLast) == 1;
+        if(bNewFrame) {
+            videoTimestampLast = videoTimestamp;
+            videoTime = videoTimestamp;
+        }
+        
+        if([self.delegate respondsToSelector:@selector(playerDidProgress)]) {
+            [self.delegate playerDidProgress];
+        }
     }
 }
 
@@ -527,11 +662,11 @@ static const NSString * ItemStatusContext;
 
 //---------------------------------------------------------- seek.
 - (void)seekToStart {
-	[self seekToTime:kCMTimeZero withTolerance:kCMTimePositiveInfinity];
+	[self seekToTime:kCMTimeZero withTolerance:kCMTimeZero];
 }
 
 - (void)seekToTime:(CMTime)time {
-	[self seekToTime:time withTolerance:kCMTimePositiveInfinity];
+	[self seekToTime:time withTolerance:kCMTimeZero];
 }
 
 - (void)seekToTime:(CMTime)time 
@@ -547,9 +682,23 @@ static const NSString * ItemStatusContext;
     
     [self.assetReader cancelReading];
 	self.assetReader = nil;
-    self.assetReaderVideoOutput = nil;
+    self.assetReaderVideoTrackOutput = nil;
+    self.assetReaderAudioTrackOutput = nil;
     
-	[_player seekToTime:time toleranceBefore:tolerance toleranceAfter:tolerance];
+    bSeeking = YES;
+    
+    [_player seekToTime:time
+        toleranceBefore:tolerance
+         toleranceAfter:tolerance
+      completionHandler:^(BOOL finished) {
+          
+          bSeeking = NO;
+          
+          if([self.delegate respondsToSelector:@selector(playerDidFinishSeeking)]) {
+              [self.delegate playerDidFinishSeeking];
+          }
+          
+      }];
 }
 
 //---------------------------------------------------------- states.
@@ -571,7 +720,15 @@ static const NSString * ItemStatusContext;
 
 //---------------------------------------------------------- getters / setters.
 - (CVImageBufferRef)getCurrentFrame {
-	return CMSampleBufferGetImageBuffer(buffer);
+	return CMSampleBufferGetImageBuffer(videoSampleBuffer);
+}
+
+- (CMSampleBufferRef)getVideoSampleBuffer {
+    return videoSampleBuffer;
+}
+
+- (CMSampleBufferRef)getAudioSampleBuffer {
+    return audioSampleBuffer;
 }
 
 - (NSInteger)getWidth {
@@ -580,6 +737,22 @@ static const NSString * ItemStatusContext;
 
 - (NSInteger)getHeight {
     return videoHeight;
+}
+
+- (void)setSampleTimeInSec:(double)time {
+    [self setSampleTime:CMTimeMakeWithSeconds(time, NSEC_PER_SEC)];
+}
+
+- (void)setSampleTime:(CMTime)time {
+    sampleTime = time;
+}
+
+- (CMTime)getVideoTime {
+    return videoTime;
+}
+
+- (double)getVideoTimeInSec {
+    return CMTimeGetSeconds(videoTime);
 }
 
 - (CMTime)getCurrentTime {
